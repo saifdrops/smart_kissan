@@ -12,8 +12,11 @@ import {
   WifiOff,
   Bot,
   User,
-  Leaf
+  Leaf,
+  Upload,
+  FileText
 } from 'lucide-react'
+import { smartKissanAgent, type AgentInput, type AgentResponse } from '../lib/smartKissanAgent'
 
 interface Message {
   id: string
@@ -22,6 +25,7 @@ interface Message {
   timestamp: Date
   messageType?: 'text' | 'speech' | 'image+speech'
   image?: string
+  agentResponse?: AgentResponse
   analysis?: {
     disease?: string
     severity?: number
@@ -44,6 +48,7 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
   const [language, setLanguage] = useState<'en' | 'ur'>('en')
   const [isLoading, setIsLoading] = useState(false)
   const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null)
+  const [processingAgent, setProcessingAgent] = useState(false)
   
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -102,20 +107,51 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
     setIsLoading(true)
 
     try {
-      // API call to backend
-      const response = await callAgriMindAPI(text, type, image)
+      // Determine agent mode based on input
+      let agentMode: 'disease_detection' | 'resource_allocation' = 'resource_allocation'
+      
+      if (image || text.toLowerCase().includes('disease') || text.toLowerCase().includes('بیماری') || 
+          text.toLowerCase().includes('leaf') || text.toLowerCase().includes('crop') ||
+          text.toLowerCase().includes('plant') || text.toLowerCase().includes('پتا')) {
+        agentMode = 'disease_detection'
+      }
+      
+      // Call Smart Kissan Agent
+      setProcessingAgent(true)
+      const agentInput: AgentInput = {
+        mode: agentMode,
+        ...(image && { leaf_image: image }),
+        ...(agentMode === 'resource_allocation' && { farm_request: text })
+      }
+      
+      const agentResponse = await smartKissanAgent.execute(agentInput)
+      setProcessingAgent(false)
+      
+      // Generate response content based on agent results
+      let responseContent = ''
+      
+      if (agentMode === 'disease_detection' && agentResponse.disease) {
+        responseContent = agentResponse.disease
+      } else if (agentMode === 'resource_allocation' && agentResponse.allocation) {
+        responseContent = agentResponse.allocation
+      } else {
+        responseContent = language === 'en' 
+          ? "I've analyzed your request and gathered the latest data. Here's what I found:"
+          : "میں نے آپ کی درخواست کا تجزیہ کیا ہے اور تازہ ترین ڈیٹا اکٹھا کیا ہے۔"
+      }
       
       const smartkissanMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'smartkissan',
-        content: response.content,
+        content: responseContent,
         timestamp: new Date(),
-        analysis: response.analysis
+        agentResponse
       }
 
       setMessages(prev => [...prev, smartkissanMessage])
     } catch (error) {
       console.error('API call failed:', error)
+      setProcessingAgent(false)
       
       // Fallback to mock data in offline mode
       const mockResponse = getMockResponse(text, type, image)
@@ -511,6 +547,49 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
                       )}
                       <p className="text-sm">{message.content}</p>
                       
+                      {/* Agent Response Data */}
+                      {message.agentResponse && (
+                        <div className="mt-3 space-y-3">
+                          {/* Weather Data */}
+                          {message.agentResponse.weather && (
+                            <div className="bg-blue-50 p-3 rounded-lg">
+                              <h4 className="font-semibold text-blue-800 mb-2 flex items-center">
+                                🌤️ Current Weather
+                              </h4>
+                              <div className="grid grid-cols-2 gap-2 text-sm text-blue-700">
+                                <div>Temperature: {message.agentResponse.weather.main.temp}°C</div>
+                                <div>Humidity: {message.agentResponse.weather.main.humidity}%</div>
+                                <div>Pressure: {message.agentResponse.weather.main.pressure} hPa</div>
+                                <div>Wind: {message.agentResponse.weather.wind.speed} m/s</div>
+                              </div>
+                              <p className="text-sm text-blue-600 mt-1 capitalize">
+                                {message.agentResponse.weather.weather[0].description}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Soil Data */}
+                          {message.agentResponse.soil && message.agentResponse.soil.length > 0 && (
+                            <div className="bg-amber-50 p-3 rounded-lg">
+                              <h4 className="font-semibold text-amber-800 mb-2 flex items-center">
+                                🌱 Latest Soil Data
+                              </h4>
+                              {message.agentResponse.soil.slice(-2).map((soil, idx) => (
+                                <div key={idx} className="text-sm text-amber-700 mb-1">
+                                  <div className="flex justify-between">
+                                    <span>{soil.date} {soil.time}</span>
+                                    <span>Moisture: {(soil.moisture * 100).toFixed(1)}%</span>
+                                  </div>
+                                  <div className="text-xs text-amber-600">
+                                    Surface: {soil.t0}K, 10cm: {soil.t10}K
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
                       {message.analysis && (
                         <div className="mt-3 space-y-2">
                           {message.analysis.disease && (
@@ -586,10 +665,15 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
                 <div className="bg-gray-100 px-4 py-3 rounded-2xl">
                   <div className="flex items-center space-x-2">
                     <Bot className="w-5 h-5 text-green-600" />
-                    <div className="flex space-x-1">
-                      <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                      <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    <div className="flex flex-col">
+                      <div className="flex space-x-1 mb-1">
+                        <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                        <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      </div>
+                      {processingAgent && (
+                        <span className="text-xs text-green-600">Running Smart Kissan Agent...</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -603,6 +687,28 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
         {/* Input Area */}
         <div className="bg-white border-t border-gray-200 p-4">
           <div className="max-w-4xl mx-auto">
+            {/* Quick Action Buttons */}
+            <div className="flex items-center justify-center space-x-2 mb-4">
+              <button
+                onClick={() => handleSendMessage("I need water for my 2-acre farm", 'text')}
+                className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs hover:bg-blue-200 transition-colors duration-200"
+              >
+                💧 Water Request
+              </button>
+              <button
+                onClick={() => handleSendMessage("Need fertilizer recommendations for wheat crop", 'text')}
+                className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs hover:bg-green-200 transition-colors duration-200"
+              >
+                🌿 Fertilizer Help
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs hover:bg-orange-200 transition-colors duration-200"
+              >
+                📸 Disease Check
+              </button>
+            </div>
+            
             <div className="flex items-center space-x-3">
               <button
                 onClick={() => fileInputRef.current?.click()}
