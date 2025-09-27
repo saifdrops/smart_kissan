@@ -1,0 +1,92 @@
+{
+  "name": "Smart Kissan Agent",
+  "description": "AI-powered farming assistant with disease detection, resource allocation, and real-time weather/soil data.",
+  "version": "1.0",
+  "inputs": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "disease_detection",
+        "resource_allocation"
+      ],
+      "description": "Select which agent to use."
+    },
+    "leaf_image": {
+      "type": "image",
+      "required": false,
+      "description": "Crop leaf image (JPG/PNG) for disease detection."
+    },
+    "farm_request": {
+      "type": "string",
+      "required": false,
+      "description": "Resource request (e.g., 'Need 200L water', 'Fertilizer for 2 acres')."
+    }
+  },
+  "workflow": [
+    {
+      "id": "weather_api",
+      "type": "api_call",
+      "name": "Weather Data",
+      "config": {
+        "method": "GET",
+        "url": "https://api.openweathermap.org/data/2.5/weather",
+        "params": {
+          "lat": "31.5497",
+          "lon": "74.3436",
+          "appid": "d7f7957af6c2c892eb208f181b3da98c",
+          "units": "metric"
+        }
+      },
+      "output": "weather_data"
+    },
+    {
+      "id": "soil_data",
+      "type": "python",
+      "name": "Soil Data Generator",
+      "config": {
+        "code": "import pandas as pd, random; from datetime import datetime, timedelta\nstart_date=datetime(2025,9,24);end_date=datetime(2025,9,29)\ndata=[];current_date=start_date\nwhile current_date<=end_date:\n  for hour in [9,15]:\n    t0=round(random.uniform(293,300),2)\n    t10=round(t0-random.uniform(1.5,3),2)\n    moisture=round(random.uniform(0.18,0.26),2)\n    data.append({'date':current_date.strftime('%Y-%m-%d'),'time':f\"{hour:02d}:00\",'t0':t0,'t10':t10,'moisture':moisture})\n  current_date+=timedelta(days=1)\nimport json;print(json.dumps(data,indent=2))"
+      },
+      "output": "soil_data"
+    },
+    {
+      "id": "disease_detection",
+      "type": "model_call",
+      "name": "Disease Detection Agent",
+      "when": "inputs.mode == 'disease_detection'",
+      "config": {
+        "provider": "openrouter",
+        "model": "vision-llm",
+        "input": {
+          "image": "{{inputs.leaf_image}}",
+          "prompt": "Analyze this crop leaf image. Classify if it's Healthy, Early Blight, or Rust. Explain in simple farmer-friendly words and suggest treatment."
+        }
+      },
+      "output": "disease_report"
+    },
+    {
+      "id": "resource_allocation",
+      "type": "model_call",
+      "name": "Resource Allocation Agent",
+      "when": "inputs.mode == 'resource_allocation'",
+      "config": {
+        "provider": "openrouter",
+        "model": "gemini-pro",
+        "api_key": "AIzaSyB6ycg_8SR4kjEFIunTjTwWRHyaSfQ3",
+        "input": {
+          "prompt": "Farm request: {{inputs.farm_request}}. Soil data: {{soil_data}}. Weather: {{weather_data}}. Negotiate resources fairly. Output a clear allocation plan."
+        }
+      },
+      "output": "allocation_plan"
+    }
+  ],
+  "outputs": {
+    "weather": "{{weather_data}}",
+    "soil": "{{soil_data}}",
+    "disease": "{{disease_report}}",
+    "allocation": "{{allocation_plan}}"
+  },
+  "fallbacks": {
+    "disease_detection": "If offline, compare leaf with cached reference images and apply simple rule-based diagnosis.",
+    "resource_allocation": "If offline, use cached farm data and round-robin distribution for fairness."
+  }
+}
