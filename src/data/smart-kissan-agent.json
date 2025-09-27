@@ -71,7 +71,7 @@
       "config": {
         "provider": "openrouter",
         "model": "gemini-pro",
-        "api_key": "AIzaSyB6ycg_8SR4kjEFIunTjTwWRHyaSfQ3",
+        "api_key": "AIzaSyAObxUhJi6ylNa3nXvNGIgYjM3qvUn-2Oc",
         "input": {
           "prompt": "Farm request: {{inputs.farm_request}}. Soil data: {{soil_data}}. Weather: {{weather_data}}. Negotiate resources fairly. Output a clear allocation plan."
         }
