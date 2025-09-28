@@ -319,7 +319,7 @@ class SmartKissanAgent {
   }
 
   private simulateResponseFormatter(prompt: string): string {
-    const farmerQuery = this.workflowResults.inputs?.farmer_query || ''
+    const farmerQuery = this.workflowResults.inputs?.farmer_query?.toString() || ''
     const weather = this.workflowResults.weather_data
     const soil = this.workflowResults.soil_data
     const disease = this.workflowResults.disease_report
@@ -336,16 +336,16 @@ class SmartKissanAgent {
     let response = ""
     
     // Start with acknowledgment
-    if (farmerQuery.toLowerCase().includes('barsat') || farmerQuery.toLowerCase().includes('rain')) {
+    if (farmerQuery && typeof farmerQuery === 'string' && (farmerQuery.toLowerCase().includes('barsat') || farmerQuery.toLowerCase().includes('rain'))) {
       response += "Based on current weather data, "
-      if (weather?.weather?.[0]?.description?.includes('rain') || weather?.main?.humidity > 80) {
+      if ((weather?.weather?.[0]?.description && typeof weather.weather[0].description === 'string' && weather.weather[0].description.includes('rain')) || weather?.main?.humidity > 80) {
         response += "there's a good chance of rain in the next day or two. "
       } else {
         response += "rain is not expected immediately, but humidity levels suggest possible showers later. "
       }
-    } else if (farmerQuery.toLowerCase().includes('paani') || farmerQuery.toLowerCase().includes('water')) {
+    } else if (farmerQuery && typeof farmerQuery === 'string' && (farmerQuery.toLowerCase().includes('paani') || farmerQuery.toLowerCase().includes('water'))) {
       response += "I understand you need water for your crops. "
-    } else if (farmerQuery.toLowerCase().includes('fertilizer') || farmerQuery.toLowerCase().includes('khad')) {
+    } else if (farmerQuery && typeof farmerQuery === 'string' && (farmerQuery.toLowerCase().includes('fertilizer') || farmerQuery.toLowerCase().includes('khad'))) {
       response += "Regarding your fertilizer needs, "
     } else {
       response += "Based on your farming question, "
@@ -375,9 +375,11 @@ class SmartKissanAgent {
     
     // Add disease information
     if (disease) {
-      if (disease.condition !== "Healthy") {
-        response += `I noticed signs of ${disease.condition.toLowerCase()} in your crop. ${disease.explanation} `
-        response += `My recommendation: ${disease.treatment.toLowerCase()}. `
+      if (disease.condition && disease.condition !== "Healthy") {
+        const conditionText = typeof disease.condition === 'string' ? disease.condition.toLowerCase() : disease.condition
+        const treatmentText = typeof disease.treatment === 'string' ? disease.treatment.toLowerCase() : disease.treatment
+        response += `I noticed signs of ${conditionText} in your crop. ${disease.explanation || 'Please monitor your crops closely.'} `
+        response += `My recommendation: ${treatmentText || 'consult with local agricultural experts'}. `
       } else {
         response += "Your crops look healthy, which is great! "
       }
@@ -386,7 +388,9 @@ class SmartKissanAgent {
     // Add allocation information
     if (allocation) {
       response += `Regarding your request for resources, I can approve ${allocation.allocation.approved_percent}% of what you asked for. `
-      response += `Delivery can be arranged ${allocation.delivery_schedule.toLowerCase()}. `
+      const deliverySchedule = allocation.allocation.delivery_schedule
+      const scheduleText = typeof deliverySchedule === 'string' ? deliverySchedule.toLowerCase() : deliverySchedule
+      response += `Delivery can be arranged ${scheduleText}. `
     }
     
     // Add farming tips
