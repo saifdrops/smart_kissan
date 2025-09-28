@@ -1,32 +1,32 @@
 {
   "name": "Smart Kissan Agent",
-  "description": "AI-powered farming assistant with disease detection, resource allocation, and real-time weather/soil data.",
-  "version": "1.0",
+  "description": "AI-powered farming assistant that refines farmer queries, fetches weather/soil/crop insights, and re-explains in simple farmer-friendly language.",
+  "version": "1.1",
   "inputs": {
-    "mode": {
+    "farmer_query": {
       "type": "string",
-      "enum": [
-        "disease_detection",
-        "resource_allocation"
-      ],
-      "description": "Select which agent to use."
-    },
-    "leaf_image": {
-      "type": "image",
-      "required": false,
-      "description": "Crop leaf image (JPG/PNG) for disease detection."
-    },
-    "farm_request": {
-      "type": "string",
-      "required": false,
-      "description": "Resource request (e.g., 'Need 200L water', 'Fertilizer for 2 acres')."
+      "description": "Farmer's natural language question (e.g., 'Kal barsat hogi?', 'Kya mujhe paani dena chahiye?')."
     }
   },
   "workflow": [
     {
+      "id": "query_refiner",
+      "type": "model_call",
+      "name": "Query Refiner",
+      "config": {
+        "provider": "openrouter",
+        "model": "gemini-pro",
+        "input": {
+          "prompt": "You are an AI agriculture assistant. A farmer asked: {{inputs.farmer_query}}. Rewrite this into a structured technical query (weather, soil, disease, or resource allocation) that can be used by backend agents."
+        }
+      },
+      "output": "refined_query"
+    },
+    {
       "id": "weather_api",
       "type": "api_call",
       "name": "Weather Data",
+      "when": "refined_query contains 'weather'",
       "config": {
         "method": "GET",
         "url": "https://api.openweathermap.org/data/2.5/weather",
@@ -43,6 +43,7 @@
       "id": "soil_data",
       "type": "python",
       "name": "Soil Data Generator",
+      "when": "refined_query contains 'soil'",
       "config": {
         "code": "import pandas as pd, random; from datetime import datetime, timedelta\nstart_date=datetime(2025,9,24);end_date=datetime(2025,9,29)\ndata=[];current_date=start_date\nwhile current_date<=end_date:\n  for hour in [9,15]:\n    t0=round(random.uniform(293,300),2)\n    t10=round(t0-random.uniform(1.5,3),2)\n    moisture=round(random.uniform(0.18,0.26),2)\n    data.append({'date':current_date.strftime('%Y-%m-%d'),'time':f\"{hour:02d}:00\",'t0':t0,'t10':t10,'moisture':moisture})\n  current_date+=timedelta(days=1)\nimport json;print(json.dumps(data,indent=2))"
       },
@@ -52,41 +53,53 @@
       "id": "disease_detection",
       "type": "model_call",
       "name": "Disease Detection Agent",
-      "when": "inputs.mode == 'disease_detection'",
+      "when": "refined_query contains 'disease'",
       "config": {
         "provider": "openrouter",
         "model": "vision-llm",
         "input": {
-          "image": "{{inputs.leaf_image}}",
           "prompt": "Analyze this crop leaf image. Classify if it's Healthy, Early Blight, or Rust. Explain in simple farmer-friendly words and suggest treatment."
         }
       },
       "output": "disease_report"
     },
     {
-      "id": "resource_allocation",
+      "id": "allocation_agent",
       "type": "model_call",
       "name": "Resource Allocation Agent",
-      "when": "inputs.mode == 'resource_allocation'",
+      "when": "refined_query contains 'resource'",
       "config": {
         "provider": "openrouter",
         "model": "gemini-pro",
-        "api_key": "AIzaSyAObxUhJi6ylNa3nXvNGIgYjM3qvUn-2Oc",
         "input": {
-          "prompt": "Farm request: {{inputs.farm_request}}. Soil data: {{soil_data}}. Weather: {{weather_data}}. Negotiate resources fairly. Output a clear allocation plan."
+          "prompt": "Farm request: {{refined_query}}. Provide a fair and optimized allocation plan based on available resources. Output in structured data."
         }
       },
       "output": "allocation_plan"
+    },
+    {
+      "id": "response_formatter",
+      "type": "model_call",
+      "name": "Farmer-Friendly Output",
+      "config": {
+        "provider": "openrouter",
+        "model": "gemini-pro",
+        "input": {
+          "prompt": "You are an AI agriculture advisor. Tone: supportive, simple, and conversational. Speak like a trusted farming guide, not a technical manual.\n\nFarmer asked: {{inputs.farmer_query}}\nSystem outputs: Weather: {{weather_data}}, Soil: {{soil_data}}, Disease: {{disease_report}}, Allocation: {{allocation_plan}}\n\nRewrite this output into simple, everyday farmer-friendly advice with clear actions and 1-2 extra farming tips."
+        }
+      },
+      "output": "final_answer"
     }
   ],
   "outputs": {
-    "weather": "{{weather_data}}",
-    "soil": "{{soil_data}}",
-    "disease": "{{disease_report}}",
-    "allocation": "{{allocation_plan}}"
+    "answer": "{{final_answer}}"
   },
   "fallbacks": {
-    "disease_detection": "If offline, compare leaf with cached reference images and apply simple rule-based diagnosis.",
-    "resource_allocation": "If offline, use cached farm data and round-robin distribution for fairness."
+    "query_refiner": "If offline, pass farmer query directly to backend agents without refinement.",
+    "weather_api": "If offline, provide cached or rule-based forecast (e.g., 'It usually rains in the evening during this season.').",
+    "soil_data": "If offline, assume average soil moisture 0.20 and temperature 295K.",
+    "disease_detection": "If offline, compare leaf with cached reference images and suggest simple remedies like neem spray or reducing irrigation.",
+    "allocation_agent": "If offline, use cached farm data and apply round-robin distribution for fairness.",
+    "response_formatter": "If offline, provide a short farmer-friendly summary: 'Based on usual conditions, water your crops in the morning, check for pests, and avoid over-irrigation.'"
   }
 }
