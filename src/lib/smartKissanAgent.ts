@@ -154,16 +154,27 @@ class SmartKissanAgent {
   }
 
   private evaluateCondition(condition: string): boolean {
-    // Simple condition evaluation for "contains" operations
-    if (condition.includes('contains')) {
-      const match = condition.match(/(\w+)\s+contains\s+'([^']+)'/i)
-      if (match) {
-        const [, variable, searchTerm] = match
-        const value = this.workflowResults[variable]
-        return typeof value === 'string' && value.toLowerCase().includes(searchTerm.toLowerCase())
+    try {
+      // Handle "contains" operations
+      if (condition.includes('contains')) {
+        const match = condition.match(/(\w+)\s+contains\s+'([^']+)'/i)
+        if (match) {
+          const [, variable, searchTerm] = match
+          const value = this.workflowResults[variable]
+          if (typeof value === 'string') {
+            const result = value.toLowerCase().includes(searchTerm.toLowerCase())
+            console.log(`Condition check: ${variable} contains '${searchTerm}' = ${result}`)
+            return result
+          }
+        }
       }
+      
+      // Default to true for steps without conditions
+      return true
+    } catch (error) {
+      console.warn('Error evaluating condition:', condition, error)
+      return true
     }
-    return true // Default to true if condition can't be parsed
   }
 
   private async executeStep(step: WorkflowStep): Promise<any> {
@@ -180,22 +191,32 @@ class SmartKissanAgent {
   }
 
   private async executeModelCall(step: WorkflowStep): Promise<any> {
-    // For demo purposes, we'll simulate model calls with intelligent responses
-    // In production, this would call actual OpenRouter API
-    
-    const prompt = this.interpolateTemplate(step.input?.prompt || '')
-    
-    if (step.id === 'query_refiner') {
-      return this.simulateQueryRefiner(prompt)
-    } else if (step.id === 'disease_detection') {
-      return this.simulateDiseaseDetection()
-    } else if (step.id === 'allocation_agent') {
-      return this.simulateAllocationAgent(prompt)
-    } else if (step.id === 'response_formatter') {
-      return this.simulateResponseFormatter(prompt)
+    try {
+      const prompt = this.interpolateTemplate(step.input?.prompt || '')
+      console.log(`Executing model call: ${step.id}`)
+      console.log(`Prompt: ${prompt.substring(0, 200)}...`)
+      
+      // Simulate model calls with intelligent responses
+      let result: any
+      
+      if (step.id === 'query_refiner') {
+        result = this.simulateQueryRefiner(prompt)
+      } else if (step.id === 'disease_detection') {
+        result = this.simulateDiseaseDetection()
+      } else if (step.id === 'allocation_agent') {
+        result = this.simulateAllocationAgent(prompt)
+      } else if (step.id === 'response_formatter') {
+        result = this.simulateResponseFormatter(prompt)
+      } else {
+        throw new Error(`Unknown model call: ${step.id}`)
+      }
+      
+      console.log(`Model call result for ${step.id}:`, result)
+      return result
+    } catch (error) {
+      console.error(`Model call failed for ${step.id}:`, error)
+      throw error
     }
-    
-    throw new Error(`Unknown model call: ${step.id}`)
   }
 
   private async executeApiCall(step: WorkflowStep): Promise<any> {
@@ -213,20 +234,33 @@ class SmartKissanAgent {
   }
 
   private simulateQueryRefiner(prompt: string): string {
-    const farmerQuery = this.workflowResults.inputs.farmer_query.toLowerCase()
+    const farmerQuery = this.workflowResults.inputs?.farmer_query?.toLowerCase() || ''
+    console.log(`Query refiner processing: "${farmerQuery}"`)
     
     if (farmerQuery.includes('barsat') || farmerQuery.includes('rain') || farmerQuery.includes('weather') || farmerQuery.includes('موسم')) {
-      return 'weather forecast and precipitation analysis needed'
+      const result = 'weather forecast and precipitation analysis needed'
+      console.log(`Query refined to: ${result}`)
+      return result
     } else if (farmerQuery.includes('paani') || farmerQuery.includes('water') || farmerQuery.includes('پانی') || farmerQuery.includes('irrigation')) {
-      return 'resource allocation for water irrigation required'
+      const result = 'resource allocation for water irrigation required'
+      console.log(`Query refined to: ${result}`)
+      return result
     } else if (farmerQuery.includes('disease') || farmerQuery.includes('بیماری') || farmerQuery.includes('leaf') || farmerQuery.includes('پتا')) {
-      return 'disease detection and crop health analysis needed'
+      const result = 'disease detection and crop health analysis needed'
+      console.log(`Query refined to: ${result}`)
+      return result
     } else if (farmerQuery.includes('fertilizer') || farmerQuery.includes('khad') || farmerQuery.includes('کھاد')) {
-      return 'resource allocation for fertilizer application required'
+      const result = 'resource allocation for fertilizer application required'
+      console.log(`Query refined to: ${result}`)
+      return result
     } else if (farmerQuery.includes('soil') || farmerQuery.includes('mitti') || farmerQuery.includes('مٹی')) {
-      return 'soil analysis and moisture monitoring needed'
+      const result = 'soil analysis and moisture monitoring needed'
+      console.log(`Query refined to: ${result}`)
+      return result
     } else {
-      return 'general agricultural advice and resource guidance needed'
+      const result = 'general agricultural advice and resource guidance needed'
+      console.log(`Query refined to: ${result}`)
+      return result
     }
   }
 
@@ -285,22 +319,36 @@ class SmartKissanAgent {
   }
 
   private simulateResponseFormatter(prompt: string): string {
-    const farmerQuery = this.workflowResults.inputs.farmer_query
+    const farmerQuery = this.workflowResults.inputs?.farmer_query || ''
     const weather = this.workflowResults.weather_data
     const soil = this.workflowResults.soil_data
     const disease = this.workflowResults.disease_report
     const allocation = this.workflowResults.allocation_plan
     
+    console.log('Response formatter inputs:', {
+      farmerQuery,
+      hasWeather: !!weather,
+      hasSoil: !!soil,
+      hasDisease: !!disease,
+      hasAllocation: !!allocation
+    })
+    
     let response = ""
     
     // Start with acknowledgment
-    if (farmerQuery.includes('barsat') || farmerQuery.includes('rain')) {
+    if (farmerQuery.toLowerCase().includes('barsat') || farmerQuery.toLowerCase().includes('rain')) {
       response += "Based on current weather data, "
       if (weather?.weather?.[0]?.description?.includes('rain') || weather?.main?.humidity > 80) {
         response += "there's a good chance of rain in the next day or two. "
       } else {
         response += "rain is not expected immediately, but humidity levels suggest possible showers later. "
       }
+    } else if (farmerQuery.toLowerCase().includes('paani') || farmerQuery.toLowerCase().includes('water')) {
+      response += "I understand you need water for your crops. "
+    } else if (farmerQuery.toLowerCase().includes('fertilizer') || farmerQuery.toLowerCase().includes('khad')) {
+      response += "Regarding your fertilizer needs, "
+    } else {
+      response += "Based on your farming question, "
     }
     
     // Add weather context
@@ -308,6 +356,8 @@ class SmartKissanAgent {
       response += `Current temperature is ${weather.main.temp}°C with ${weather.main.humidity}% humidity. `
       if (weather.main.temp > 30) {
         response += "It's quite hot, so your crops will need more water. "
+      } else if (weather.main.temp < 20) {
+        response += "The weather is cool, which is good for most crops. "
       }
     }
     
@@ -340,9 +390,15 @@ class SmartKissanAgent {
     }
     
     // Add farming tips
-    response += "Pro tip: Water your crops early morning or late evening to reduce evaporation. "
-    response += "Also, keep checking your plants daily for any changes in color or growth patterns."
+    if (response.length > 50) {
+      response += "Pro tip: Water your crops early morning or late evening to reduce evaporation. "
+      response += "Also, keep checking your plants daily for any changes in color or growth patterns."
+    } else {
+      // Fallback if no specific data was available
+      response = "Based on general farming practices, water your crops in the morning, check for pests regularly, and monitor soil moisture. Keep an eye on weather patterns and adjust your irrigation accordingly."
+    }
     
+    console.log('Generated response:', response)
     return response.trim()
   }
 
@@ -417,10 +473,11 @@ class SmartKissanAgent {
 
   private getFallbackResult(stepId: string): any {
     const fallbacks = this.config.fallbacks
+    console.log(`Using fallback for step: ${stepId}`)
     
     switch (stepId) {
       case 'query_refiner':
-        return 'general agricultural advice needed'
+        return 'general agricultural advice and resource guidance needed'
       case 'weather_api':
         return 'Weather conditions are moderate. Check local forecasts for rain.'
       case 'soil_data':
@@ -457,9 +514,9 @@ class SmartKissanAgent {
           next_steps: ['Contact local cooperative', 'Prepare application area', 'Schedule follow-up']
         }
       case 'response_formatter':
-        return fallbacks[stepId] || 'Based on usual conditions, water your crops in the morning, check for pests, and avoid over-irrigation.'
+        return 'Based on general farming practices, water your crops in the morning, check for pests regularly, and monitor soil moisture. Keep an eye on weather patterns and adjust your irrigation accordingly.'
       default:
-        return fallbacks[stepId] || 'Information not available offline.'
+        return 'Information not available at the moment. Please try again later.'
     }
   }
 }
