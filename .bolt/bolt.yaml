@@ -1,0 +1,142 @@
+name: smart-kissan-agent
+version: "1.0"
+
+description: >
+  AI-powered farming assistant that refines farmer queries, 
+  fetches weather/soil/crop insights, and re-explains in simple farmer-friendly language.
+
+inputs:
+  farmer_query:
+    type: string
+    description: Farmer's natural language question (e.g., "Kal barsat hogi?", "Kya mujhe paani dena chahiye?")
+
+workflow:
+  - id: query_refiner
+    type: model_call
+    name: Query Refiner
+    provider: openrouter
+    model: gemini-pro
+    input:
+      prompt: |
+        You are an AI agriculture assistant. A farmer asked: {{inputs.farmer_query}}.
+        Rewrite this into a structured technical query (weather, soil, disease, or resource allocation)
+        that can be used by backend agents. Respond only with the technical query.
+    output: refined_query
+
+  - id: weather_api
+    type: api_call
+    name: Weather Data
+    when: refined_query contains 'weather'
+    method: GET
+    url: https://api.openweathermap.org/data/2.5/weather
+    params:
+      lat: "31.5497"
+      lon: "74.3436"
+      appid: "d7f7957af6c2c892eb208f181b3da98c"
+      units: metric
+    output: weather_data
+
+  - id: soil_data
+    type: python
+    name: Soil Data Generator
+    when: refined_query contains 'soil'
+    code: |
+      import pandas as pd, random
+      from datetime import datetime, timedelta
+      start_date=datetime(2025,9,24);end_date=datetime(2025,9,29)
+      data=[];current_date=start_date
+      while current_date<=end_date:
+        for hour in [9,15]:
+          t0=round(random.uniform(293,300),2)
+          t10=round(t0-random.uniform(1.5,3),2)
+          moisture=round(random.uniform(0.18,0.26),2)
+          data.append({
+            'date':current_date.strftime('%Y-%m-%d'),
+            'time':f"{hour:02d}:00",
+            't0':t0,
+            't10':t10,
+            'moisture':moisture
+          })
+        current_date+=timedelta(days=1)
+      import json;print(json.dumps(data,indent=2))
+    output: soil_data
+
+  - id: disease_detection
+    type: model_call
+    name: Disease Detection Agent
+    when: refined_query contains 'disease'
+    provider: openrouter
+    model: vision-llm
+    input:
+      prompt: |
+        Analyze this crop leaf image. Classify if it's Healthy, Early Blight, or Rust.
+        Output ONLY in JSON:
+        {
+          "condition": "Healthy | Early Blight | Rust",
+          "explanation": "<simple explanation for farmer>",
+          "treatment": "<suggested action>"
+        }
+    output: disease_report
+
+  - id: allocation_agent
+    type: model_call
+    name: Resource Allocation Agent
+    when: refined_query contains 'resource'
+    provider: openrouter
+    model: gemini-pro
+    input:
+      prompt: |
+        You are a farm resource allocation agent. Farm request: {{refined_query}}.
+        Always respond ONLY in valid JSON:
+        {
+          "request": "<farmer's request>",
+          "allocation": {
+            "approved_percent": <number>,
+            "delivery_schedule": "<string>",
+            "priority": "High | Medium | Low"
+          },
+          "analysis": {
+            "soil_moisture": <float>,
+            "recommendation": "<short suggestion>"
+          },
+          "weather": {
+            "temperature_c": <float>,
+            "humidity_percent": <float>,
+            "condition": "<string>"
+          },
+          "next_steps": ["<step 1>", "<step 2>", "<step 3>"]
+        }
+    output: allocation_plan
+
+  - id: response_formatter
+    type: model_call
+    name: Farmer-Friendly Output
+    provider: openrouter
+    model: gemini-pro
+    input:
+      prompt: |
+        You are an AI agriculture advisor.
+        Tone: supportive, simple, conversational, trusted advisor.
+
+        Farmer asked: {{inputs.farmer_query}}
+        System outputs (raw): 
+        Weather: {{weather_data}}, 
+        Soil: {{soil_data}}, 
+        Disease: {{disease_report}}, 
+        Allocation: {{allocation_plan}}
+
+        Rewrite this into 3-5 sentences of everyday farmer-friendly advice 
+        with clear next steps and 1-2 helpful farming tips.
+        Do NOT use JSON, emojis, or markdown. Just plain text.
+    output: final_answer
+
+outputs:
+  answer: "{{final_answer}}"
+
+fallbacks:
+  query_refiner: "If offline, pass farmer query directly to backend agents without refinement."
+  weather_api: "If offline, provide cached or rule-based forecast like: 'It usually rains in the evening during this season.'"
+  soil_data: "If offline, assume average soil moisture 0.20 and temperature 295K."
+  disease_detection: "If offline, compare leaf with cached reference images and suggest simple remedies like neem spray or reducing irrigation."
+  allocation_agent: "If offline, use cached farm data and apply round-robin distribution for fairness."
+  response_formatter: "If offline, provide a short farmer-friendly summary: 'Based on usual conditions, water your crops in the morning, check for pests, and avoid over-irrigation.'"
