@@ -1,9 +1,8 @@
-import smartKissanConfig from '../data/smart-kissan-agent.json'
+import yaml from 'js-yaml'
+import smartKissanYaml from '../data/smart-kissan-agent.yaml?raw'
 
 export interface AgentInput {
-  mode: 'disease_detection' | 'resource_allocation'
-  leaf_image?: string
-  farm_request?: string
+  farmer_query: string
 }
 
 export interface WeatherData {
@@ -29,39 +28,118 @@ export interface SoilData {
   moisture: number
 }
 
+export interface DiseaseReport {
+  condition: string
+  explanation: string
+  treatment: string
+}
+
+export interface AllocationPlan {
+  request: string
+  allocation: {
+    approved_percent: number
+    delivery_schedule: string
+    priority: string
+  }
+  analysis: {
+    soil_moisture: number
+    recommendation: string
+  }
+  weather: {
+    temperature_c: number
+    humidity_percent: number
+    condition: string
+  }
+  next_steps: string[]
+}
+
 export interface AgentResponse {
   weather?: WeatherData
   soil?: SoilData[]
-  disease?: string
-  allocation?: string
+  disease?: DiseaseReport
+  allocation?: AllocationPlan
+  final_answer?: string
   success: boolean
   error?: string
 }
 
+interface WorkflowStep {
+  id: string
+  type: string
+  name: string
+  when?: string
+  provider?: string
+  model?: string
+  method?: string
+  url?: string
+  params?: Record<string, any>
+  input?: Record<string, any>
+  code?: string
+  output: string
+}
+
+interface AgentConfig {
+  name: string
+  version: string
+  description: string
+  inputs: Record<string, any>
+  workflow: WorkflowStep[]
+  outputs: Record<string, string>
+  fallbacks: Record<string, string>
+}
+
 class SmartKissanAgent {
-  private config = smartKissanConfig
+  private config: AgentConfig
+  private workflowResults: Record<string, any> = {}
+
+  constructor() {
+    try {
+      this.config = yaml.load(smartKissanYaml) as AgentConfig
+    } catch (error) {
+      console.error('Failed to parse YAML configuration:', error)
+      throw new Error('Invalid agent configuration')
+    }
+  }
 
   async execute(inputs: AgentInput): Promise<AgentResponse> {
     try {
+      this.workflowResults = { inputs }
       const results: AgentResponse = { success: true }
 
-      // Step 1: Get Weather Data
-      try {
-        const weatherData = await this.getWeatherData()
-        results.weather = weatherData
-      } catch (error) {
-        console.warn('Weather API failed, using fallback data')
-        results.weather = this.getFallbackWeatherData()
-      }
+      // Execute workflow steps in order
+      for (const step of this.config.workflow) {
+        try {
+          // Check conditional execution
+          if (step.when && !this.evaluateCondition(step.when)) {
+            console.log(`Skipping step ${step.id} - condition not met: ${step.when}`)
+            continue
+          }
 
-      // Step 2: Generate Soil Data
-      results.soil = this.generateSoilData()
+          console.log(`Executing step: ${step.id}`)
+          const stepResult = await this.executeStep(step)
+          this.workflowResults[step.output] = stepResult
 
-      // Step 3: Execute specific agent based on mode
-      if (inputs.mode === 'disease_detection' && inputs.leaf_image) {
-        results.disease = await this.detectDisease(inputs.leaf_image, results.weather, results.soil)
-      } else if (inputs.mode === 'resource_allocation' && inputs.farm_request) {
-        results.allocation = await this.allocateResources(inputs.farm_request, results.weather, results.soil)
+          // Store results in response object
+          if (step.id === 'weather_api') {
+            results.weather = stepResult
+          } else if (step.id === 'soil_data') {
+            results.soil = stepResult
+          } else if (step.id === 'disease_detection') {
+            results.disease = stepResult
+          } else if (step.id === 'allocation_agent') {
+            results.allocation = stepResult
+          } else if (step.id === 'response_formatter') {
+            results.final_answer = stepResult
+          }
+        } catch (error) {
+          console.warn(`Step ${step.id} failed, using fallback:`, error)
+          const fallbackResult = this.getFallbackResult(step.id)
+          this.workflowResults[step.output] = fallbackResult
+          
+          if (step.id === 'response_formatter') {
+            results.final_answer = fallbackResult
+          }
+        }
       }
 
       return results
@@ -69,39 +147,230 @@ class SmartKissanAgent {
       console.error('Agent execution failed:', error)
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        final_answer: this.getFallbackResult('response_formatter')
       }
     }
   }
 
-  private async getWeatherData(): Promise<WeatherData> {
-    const apiKey = import.meta.env.VITE_OPENWEATHER_API_KEY
-    const { lat, lon } = this.config.workflow[0].config.params
-    
-    const response = await fetch(
-      `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`
-    )
-    
-    if (!response.ok) {
-      throw new Error('Weather API request failed')
+  private evaluateCondition(condition: string): boolean {
+    // Simple condition evaluation for "contains" operations
+    if (condition.includes('contains')) {
+      const match = condition.match(/(\w+)\s+contains\s+'([^']+)'/i)
+      if (match) {
+        const [, variable, searchTerm] = match
+        const value = this.workflowResults[variable]
+        return typeof value === 'string' && value.toLowerCase().includes(searchTerm.toLowerCase())
+      }
     }
-    
-    return await response.json()
+    return true // Default to true if condition can't be parsed
   }
 
-  private getFallbackWeatherData(): WeatherData {
-    return {
-      main: {
-        temp: 28,
-        humidity: 65,
-        pressure: 1013
+  private async executeStep(step: WorkflowStep): Promise<any> {
+    switch (step.type) {
+      case 'model_call':
+        return await this.executeModelCall(step)
+      case 'api_call':
+        return await this.executeApiCall(step)
+      case 'python':
+        return this.executePythonCode(step)
+      default:
+        throw new Error(`Unknown step type: ${step.type}`)
+    }
+  }
+
+  private async executeModelCall(step: WorkflowStep): Promise<any> {
+    // For demo purposes, we'll simulate model calls with intelligent responses
+    // In production, this would call actual OpenRouter API
+    
+    const prompt = this.interpolateTemplate(step.input?.prompt || '')
+    
+    if (step.id === 'query_refiner') {
+      return this.simulateQueryRefiner(prompt)
+    } else if (step.id === 'disease_detection') {
+      return this.simulateDiseaseDetection()
+    } else if (step.id === 'allocation_agent') {
+      return this.simulateAllocationAgent(prompt)
+    } else if (step.id === 'response_formatter') {
+      return this.simulateResponseFormatter(prompt)
+    }
+    
+    throw new Error(`Unknown model call: ${step.id}`)
+  }
+
+  private async executeApiCall(step: WorkflowStep): Promise<any> {
+    if (step.id === 'weather_api') {
+      return await this.getWeatherData(step)
+    }
+    throw new Error(`Unknown API call: ${step.id}`)
+  }
+
+  private executePythonCode(step: WorkflowStep): any {
+    if (step.id === 'soil_data') {
+      return this.generateSoilData()
+    }
+    throw new Error(`Unknown Python execution: ${step.id}`)
+  }
+
+  private simulateQueryRefiner(prompt: string): string {
+    const farmerQuery = this.workflowResults.inputs.farmer_query.toLowerCase()
+    
+    if (farmerQuery.includes('barsat') || farmerQuery.includes('rain') || farmerQuery.includes('weather') || farmerQuery.includes('موسم')) {
+      return 'weather forecast and precipitation analysis needed'
+    } else if (farmerQuery.includes('paani') || farmerQuery.includes('water') || farmerQuery.includes('پانی') || farmerQuery.includes('irrigation')) {
+      return 'resource allocation for water irrigation required'
+    } else if (farmerQuery.includes('disease') || farmerQuery.includes('بیماری') || farmerQuery.includes('leaf') || farmerQuery.includes('پتا')) {
+      return 'disease detection and crop health analysis needed'
+    } else if (farmerQuery.includes('fertilizer') || farmerQuery.includes('khad') || farmerQuery.includes('کھاد')) {
+      return 'resource allocation for fertilizer application required'
+    } else if (farmerQuery.includes('soil') || farmerQuery.includes('mitti') || farmerQuery.includes('مٹی')) {
+      return 'soil analysis and moisture monitoring needed'
+    } else {
+      return 'general agricultural advice and resource guidance needed'
+    }
+  }
+
+  private simulateDiseaseDetection(): DiseaseReport {
+    const diseases = [
+      {
+        condition: "Early Blight",
+        explanation: "Your crop shows signs of early blight disease with dark spots on leaves",
+        treatment: "Apply copper-based fungicide every 7 days and remove affected leaves"
       },
-      weather: [{
-        main: 'Clear',
-        description: 'clear sky'
-      }],
-      wind: {
-        speed: 3.5
+      {
+        condition: "Leaf Rust",
+        explanation: "Orange-brown spots indicate leaf rust affecting your crop",
+        treatment: "Use sulfur-based spray and improve air circulation around plants"
+      },
+      {
+        condition: "Healthy",
+        explanation: "Your crop leaves look healthy with good green color",
+        treatment: "Continue current care practices and monitor regularly"
+      }
+    ]
+    
+    return diseases[Math.floor(Math.random() * diseases.length)]
+  }
+
+  private simulateAllocationAgent(prompt: string): AllocationPlan {
+    const farmerQuery = this.workflowResults.inputs.farmer_query
+    const weather = this.workflowResults.weather_data
+    const soil = this.workflowResults.soil_data
+    
+    const isWaterRequest = farmerQuery.toLowerCase().includes('water') || farmerQuery.toLowerCase().includes('paani') || farmerQuery.toLowerCase().includes('پانی')
+    const isFertilizerRequest = farmerQuery.toLowerCase().includes('fertilizer') || farmerQuery.toLowerCase().includes('khad') || farmerQuery.toLowerCase().includes('کھاد')
+    
+    return {
+      request: farmerQuery,
+      allocation: {
+        approved_percent: isWaterRequest ? 85 : isFertilizerRequest ? 75 : 70,
+        delivery_schedule: "Within 2-3 days",
+        priority: weather?.main?.temp > 30 ? "High" : "Medium"
+      },
+      analysis: {
+        soil_moisture: soil && soil.length > 0 ? soil[soil.length - 1].moisture : 0.22,
+        recommendation: isWaterRequest ? "Increase irrigation frequency due to high temperature" : "Apply during cooler hours"
+      },
+      weather: {
+        temperature_c: weather?.main?.temp || 28,
+        humidity_percent: weather?.main?.humidity || 65,
+        condition: weather?.weather?.[0]?.description || "partly cloudy"
+      },
+      next_steps: [
+        "Confirm pickup location and timing",
+        "Prepare application equipment",
+        "Monitor crop response after application"
+      ]
+    }
+  }
+
+  private simulateResponseFormatter(prompt: string): string {
+    const farmerQuery = this.workflowResults.inputs.farmer_query
+    const weather = this.workflowResults.weather_data
+    const soil = this.workflowResults.soil_data
+    const disease = this.workflowResults.disease_report
+    const allocation = this.workflowResults.allocation_plan
+    
+    let response = ""
+    
+    // Start with acknowledgment
+    if (farmerQuery.includes('barsat') || farmerQuery.includes('rain')) {
+      response += "Based on current weather data, "
+      if (weather?.weather?.[0]?.description?.includes('rain') || weather?.main?.humidity > 80) {
+        response += "there's a good chance of rain in the next day or two. "
+      } else {
+        response += "rain is not expected immediately, but humidity levels suggest possible showers later. "
+      }
+    }
+    
+    // Add weather context
+    if (weather) {
+      response += `Current temperature is ${weather.main.temp}°C with ${weather.main.humidity}% humidity. `
+      if (weather.main.temp > 30) {
+        response += "It's quite hot, so your crops will need more water. "
+      }
+    }
+    
+    // Add soil information
+    if (soil && soil.length > 0) {
+      const latestSoil = soil[soil.length - 1]
+      const moisturePercent = (latestSoil.moisture * 100).toFixed(0)
+      response += `Your soil moisture is at ${moisturePercent}%. `
+      if (latestSoil.moisture < 0.2) {
+        response += "This is on the low side, so consider watering your crops soon. "
+      } else if (latestSoil.moisture > 0.25) {
+        response += "Moisture levels are good, so you can wait a day before the next watering. "
+      }
+    }
+    
+    // Add disease information
+    if (disease) {
+      if (disease.condition !== "Healthy") {
+        response += `I noticed signs of ${disease.condition.toLowerCase()} in your crop. ${disease.explanation} `
+        response += `My recommendation: ${disease.treatment.toLowerCase()}. `
+      } else {
+        response += "Your crops look healthy, which is great! "
+      }
+    }
+    
+    // Add allocation information
+    if (allocation) {
+      response += `Regarding your request for resources, I can approve ${allocation.allocation.approved_percent}% of what you asked for. `
+      response += `Delivery can be arranged ${allocation.delivery_schedule.toLowerCase()}. `
+    }
+    
+    // Add farming tips
+    response += "Pro tip: Water your crops early morning or late evening to reduce evaporation. "
+    response += "Also, keep checking your plants daily for any changes in color or growth patterns."
+    
+    return response.trim()
+  }
+
+  private async getWeatherData(step: WorkflowStep): Promise<WeatherData> {
+    try {
+      const params = new URLSearchParams(step.params as Record<string, string>)
+      const response = await fetch(`${step.url}?${params}`)
+      
+      if (!response.ok) {
+        throw new Error('Weather API request failed')
+      }
+      
+      return await response.json()
+    } catch (error) {
+      // Return fallback weather data
+      return {
+        main: {
+          temp: 28,
+          humidity: 65,
+          pressure: 1013
+        },
+        weather: [{
+          main: 'Clear',
+          description: 'clear sky'
+        }],
+        wind: {
+          speed: 3.5
+        }
       }
     }
   }
@@ -133,130 +402,65 @@ class SmartKissanAgent {
     return data
   }
 
-  private async detectDisease(image: string, weather?: WeatherData, soil?: SoilData[]): Promise<string> {
-    try {
-      // In a real implementation, this would call OpenRouter's vision model
-      // For now, we'll use rule-based detection with mock analysis
+  private interpolateTemplate(template: string): string {
+    return template.replace(/\{\{([^}]+)\}\}/g, (match, path) => {
+      const keys = path.trim().split('.')
+      let value = this.workflowResults
       
-      const mockDiseases = [
-        {
-          name: 'Early Blight',
-          confidence: 85,
-          severity: 'Moderate',
-          treatment: 'Apply copper-based fungicide every 7-10 days. Remove affected leaves and improve air circulation.',
-          prevention: 'Avoid overhead watering, maintain proper plant spacing, and apply preventive fungicide sprays.'
-        },
-        {
-          name: 'Leaf Rust',
-          confidence: 78,
-          severity: 'Mild',
-          treatment: 'Use sulfur-based fungicide. Ensure good drainage and reduce humidity around plants.',
-          prevention: 'Plant resistant varieties, avoid overcrowding, and water at soil level.'
-        },
-        {
-          name: 'Healthy',
-          confidence: 92,
-          severity: 'None',
-          treatment: 'No treatment needed. Continue current care practices.',
-          prevention: 'Maintain regular monitoring, proper nutrition, and good cultural practices.'
+      for (const key of keys) {
+        value = value?.[key]
+      }
+      
+      return typeof value === 'string' ? value : JSON.stringify(value) || match
+    })
+  }
+
+  private getFallbackResult(stepId: string): any {
+    const fallbacks = this.config.fallbacks
+    
+    switch (stepId) {
+      case 'query_refiner':
+        return 'general agricultural advice needed'
+      case 'weather_api':
+        return 'Weather conditions are moderate. Check local forecasts for rain.'
+      case 'soil_data':
+        return [{
+          date: new Date().toISOString().split('T')[0],
+          time: '09:00',
+          t0: 295,
+          t10: 293,
+          moisture: 0.20
+        }]
+      case 'disease_detection':
+        return {
+          condition: 'Unknown',
+          explanation: 'Unable to analyze image. Check for yellowing, spots, or wilting.',
+          treatment: 'Apply general fungicide and improve plant care.'
         }
-      ]
-      
-      const randomDisease = mockDiseases[Math.floor(Math.random() * mockDiseases.length)]
-      
-      let analysis = `**Disease Analysis Results**\n\n`
-      analysis += `🔍 **Detected Condition:** ${randomDisease.name}\n`
-      analysis += `📊 **Confidence Level:** ${randomDisease.confidence}%\n`
-      analysis += `⚠️ **Severity:** ${randomDisease.severity}\n\n`
-      
-      analysis += `💊 **Treatment Recommendation:**\n${randomDisease.treatment}\n\n`
-      analysis += `🛡️ **Prevention Tips:**\n${randomDisease.prevention}\n\n`
-      
-      if (weather) {
-        analysis += `🌤️ **Weather Context:**\n`
-        analysis += `Current temperature: ${weather.main.temp}°C, Humidity: ${weather.main.humidity}%\n`
-        analysis += `Weather conditions may ${weather.main.humidity > 70 ? 'increase' : 'reduce'} disease pressure.\n\n`
-      }
-      
-      if (soil && soil.length > 0) {
-        const latestSoil = soil[soil.length - 1]
-        analysis += `🌱 **Soil Conditions:**\n`
-        analysis += `Soil moisture: ${(latestSoil.moisture * 100).toFixed(1)}%\n`
-        analysis += `Temperature: ${latestSoil.t0}K at surface\n`
-        analysis += `${latestSoil.moisture < 0.2 ? 'Consider increasing irrigation.' : 'Soil moisture levels are adequate.'}`
-      }
-      
-      return analysis
-    } catch (error) {
-      return this.getFallbackDiseaseDetection()
-    }
-  }
-
-  private async allocateResources(request: string, weather?: WeatherData, soil?: SoilData[]): Promise<string> {
-    try {
-      // Mock resource allocation logic
-      let allocation = `**Resource Allocation Plan**\n\n`
-      allocation += `📝 **Request:** ${request}\n\n`
-      
-      // Parse request for resource type
-      const isWaterRequest = request.toLowerCase().includes('water')
-      const isFertilizerRequest = request.toLowerCase().includes('fertilizer') || request.toLowerCase().includes('fertiliser')
-      const isSeedRequest = request.toLowerCase().includes('seed')
-      
-      if (isWaterRequest) {
-        allocation += `💧 **Water Allocation:**\n`
-        allocation += `• Approved: 80% of requested amount\n`
-        allocation += `• Delivery schedule: Next 2-3 days\n`
-        allocation += `• Priority: High (based on current soil moisture)\n\n`
-        
-        if (soil && soil.length > 0) {
-          const avgMoisture = soil.reduce((sum, s) => sum + s.moisture, 0) / soil.length
-          allocation += `📊 **Soil Analysis:**\n`
-          allocation += `• Current moisture: ${(avgMoisture * 100).toFixed(1)}%\n`
-          allocation += `• ${avgMoisture < 0.2 ? 'Irrigation needed urgently' : 'Moderate irrigation required'}\n\n`
+      case 'allocation_agent':
+        return {
+          request: this.workflowResults.inputs?.farmer_query || 'Resource request',
+          allocation: {
+            approved_percent: 70,
+            delivery_schedule: 'Within 3-5 days',
+            priority: 'Medium'
+          },
+          analysis: {
+            soil_moisture: 0.20,
+            recommendation: 'Monitor crop conditions regularly'
+          },
+          weather: {
+            temperature_c: 25,
+            humidity_percent: 60,
+            condition: 'partly cloudy'
+          },
+          next_steps: ['Contact local cooperative', 'Prepare application area', 'Schedule follow-up']
         }
-      }
-      
-      if (isFertilizerRequest) {
-        allocation += `🌿 **Fertilizer Allocation:**\n`
-        allocation += `• NPK 20-20-20: 50kg approved\n`
-        allocation += `• Organic compost: 100kg available\n`
-        allocation += `• Application timing: Before next rainfall\n\n`
-      }
-      
-      if (isSeedRequest) {
-        allocation += `🌱 **Seed Allocation:**\n`
-        allocation += `• High-yield variety: Available\n`
-        allocation += `• Disease-resistant strain: Recommended\n`
-        allocation += `• Quantity: Based on land area\n\n`
-      }
-      
-      if (weather) {
-        allocation += `🌤️ **Weather Considerations:**\n`
-        allocation += `• Temperature: ${weather.main.temp}°C (${weather.main.temp > 30 ? 'Hot' : weather.main.temp < 20 ? 'Cool' : 'Moderate'})\n`
-        allocation += `• Humidity: ${weather.main.humidity}%\n`
-        allocation += `• Conditions: ${weather.weather[0].description}\n`
-        allocation += `• Recommendation: ${weather.main.temp > 30 ? 'Increase irrigation frequency' : 'Normal irrigation schedule'}\n\n`
-      }
-      
-      allocation += `✅ **Next Steps:**\n`
-      allocation += `1. Confirm resource pickup location\n`
-      allocation += `2. Schedule delivery within 48 hours\n`
-      allocation += `3. Follow up on application results\n`
-      allocation += `4. Monitor crop response and adjust as needed`
-      
-      return allocation
-    } catch (error) {
-      return this.getFallbackResourceAllocation(request)
+      case 'response_formatter':
+        return fallbacks[stepId] || 'Based on usual conditions, water your crops in the morning, check for pests, and avoid over-irrigation.'
+      default:
+        return fallbacks[stepId] || 'Information not available offline.'
     }
-  }
-
-  private getFallbackDiseaseDetection(): string {
-    return `**Offline Disease Analysis**\n\nUnable to connect to AI analysis service. Based on visual inspection:\n\n• Check for common signs: yellowing, spots, wilting\n• Apply general fungicide if disease symptoms present\n• Improve air circulation and reduce moisture\n• Consult local agricultural extension office`
-  }
-
-  private getFallbackResourceAllocation(request: string): string {
-    return `**Offline Resource Allocation**\n\nRequest: ${request}\n\nUsing cached allocation rules:\n• Water requests: 70% approval rate\n• Fertilizer: Standard NPK recommended\n• Seeds: Local varieties available\n\nContact local cooperative for immediate assistance.`
   }
 }
 

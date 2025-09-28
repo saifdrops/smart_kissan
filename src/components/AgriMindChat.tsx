@@ -26,14 +26,6 @@ interface Message {
   messageType?: 'text' | 'speech' | 'image+speech'
   image?: string
   agentResponse?: AgentResponse
-  analysis?: {
-    disease?: string
-    severity?: number
-    confidence?: number
-    recommendations?: string[]
-    weather?: string
-    irrigation?: string
-  }
 }
 
 interface SmartKissanChatProps {
@@ -107,38 +99,20 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
     setIsLoading(true)
 
     try {
-      // Determine agent mode based on input
-      let agentMode: 'disease_detection' | 'resource_allocation' = 'resource_allocation'
-      
-      if (image || text.toLowerCase().includes('disease') || text.toLowerCase().includes('بیماری') || 
-          text.toLowerCase().includes('leaf') || text.toLowerCase().includes('crop') ||
-          text.toLowerCase().includes('plant') || text.toLowerCase().includes('پتا')) {
-        agentMode = 'disease_detection'
-      }
-      
       // Call Smart Kissan Agent
       setProcessingAgent(true)
       const agentInput: AgentInput = {
-        mode: agentMode,
-        ...(image && { leaf_image: image }),
-        ...(agentMode === 'resource_allocation' && { farm_request: text })
+        farmer_query: text
       }
       
       const agentResponse = await smartKissanAgent.execute(agentInput)
       setProcessingAgent(false)
       
-      // Generate response content based on agent results
-      let responseContent = ''
-      
-      if (agentMode === 'disease_detection' && agentResponse.disease) {
-        responseContent = agentResponse.disease
-      } else if (agentMode === 'resource_allocation' && agentResponse.allocation) {
-        responseContent = agentResponse.allocation
-      } else {
-        responseContent = language === 'en' 
+      // Use the farmer-friendly response from the agent
+      const responseContent = agentResponse.final_answer || 
+        (language === 'en' 
           ? "I've analyzed your request and gathered the latest data. Here's what I found:"
-          : "میں نے آپ کی درخواست کا تجزیہ کیا ہے اور تازہ ترین ڈیٹا اکٹھا کیا ہے۔"
-      }
+          : "میں نے آپ کی درخواست کا تجزیہ کیا ہے اور تازہ ترین ڈیٹا اکٹھا کیا ہے۔")
       
       const smartkissanMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -153,123 +127,20 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
       console.error('API call failed:', error)
       setProcessingAgent(false)
       
-      // Fallback to mock data in offline mode
-      const mockResponse = getMockResponse(text, type, image)
+      // Fallback response
       const smartkissanMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'smartkissan',
-        content: mockResponse.content,
-        timestamp: new Date(),
-        analysis: mockResponse.analysis
+        content: language === 'en' 
+          ? "I'm having trouble connecting right now, but based on usual conditions, water your crops in the morning, check for pests, and avoid over-irrigation."
+          : "فی الوقت کنکشن میں مسئلہ ہے، لیکن عام حالات کی بنیاد پر، صبح اپنی فصلوں کو پانی دیں، کیڑوں کی جانچ کریں، اور زیادہ پانی دینے سے بچیں۔",
+        timestamp: new Date()
       }
 
       setMessages(prev => [...prev, smartkissanMessage])
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const callAgriMindAPI = async (text: string, type: string, image?: string) => {
-    const apiEndpoint = import.meta.env.VITE_AGRIMIND_API_URL
-    
-    // If API endpoint is not configured, use mock responses
-    if (!apiEndpoint || apiEndpoint === 'your_agrimind_api_url' || apiEndpoint.includes('placeholder')) {
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      return getMockResponse(text, type, image)
-    }
-    
-    const payload = {
-      type,
-      content: text,
-      language,
-      ...(image && { image }),
-      ...(type === 'image+speech' && { speech_text: text })
-    }
-
-    const response = await fetch(apiEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload)
-    })
-
-    if (!response.ok) {
-      throw new Error('API call failed')
-    }
-
-    return await response.json()
-  }
-
-  const getMockResponse = (text: string, type: string, image?: string) => {
-    const mockResponses = {
-      en: {
-        disease: {
-          content: "Based on the image analysis, I've identified a potential leaf blight disease affecting your crop.",
-          analysis: {
-            disease: "Leaf Blight",
-            severity: 65,
-            confidence: 87,
-            recommendations: [
-              "Apply copper-based fungicide (2-3ml per liter)",
-              "Improve air circulation around plants",
-              "Remove affected leaves immediately",
-              "Avoid overhead watering"
-            ],
-            weather: "Current humidity levels are high. Consider reducing irrigation frequency.",
-            irrigation: "Water at soil level, avoid wetting leaves. Early morning watering recommended."
-          }
-        },
-        general: {
-          content: "I understand you're asking about crop management. Here are some general recommendations for healthy crop growth.",
-          analysis: {
-            recommendations: [
-              "Maintain proper soil pH (6.0-7.0)",
-              "Ensure adequate drainage",
-              "Apply balanced NPK fertilizer",
-              "Monitor for pest activity regularly"
-            ],
-            weather: "Weather conditions are favorable for crop growth.",
-            irrigation: "Maintain consistent moisture levels in soil."
-          }
-        }
-      },
-      ur: {
-        disease: {
-          content: "تصویر کے تجزیے کی بنیاد پر، میں نے آپ کی فصل میں پتوں کی بیماری کی تشخیص کی ہے۔",
-          analysis: {
-            disease: "پتوں کا جھلساؤ",
-            severity: 65,
-            confidence: 87,
-            recommendations: [
-              "کاپر بیسڈ فنگی سائیڈ استعمال کریں (2-3ml فی لیٹر)",
-              "پودوں کے ارد گرد ہوا کی گردش بہتر بنائیں",
-              "متاثرہ پتے فوری طور پر ہٹا دیں",
-              "اوپر سے پانی دینے سے بچیں"
-            ],
-            weather: "موجودہ نمی کی سطح زیادہ ہے۔ پانی دینے کی تعدد کم کرنے پر غور کریں۔",
-            irrigation: "مٹی کی سطح پر پانی دیں، پتوں کو گیلا کرنے سے بچیں۔"
-          }
-        },
-        general: {
-          content: "میں سمجھ گیا ہوں کہ آپ فصل کی دیکھ بھال کے بارے میں پوچھ رہے ہیں۔",
-          analysis: {
-            recommendations: [
-              "مٹی کا مناسب pH برقرار رکھیں (6.0-7.0)",
-              "مناسب نکاسی آب کو یقینی بنائیں",
-              "متوازن NPK کھاد استعمال کریں",
-              "کیڑوں کی باقاعدگی سے نگرانی کریں"
-            ]
-          }
-        }
-      }
-    }
-
-    const responses = mockResponses[language]
-    return image || text.toLowerCase().includes('disease') || text.toLowerCase().includes('بیماری') 
-      ? responses.disease 
-      : responses.general
   }
 
   const startRecording = () => {
@@ -585,57 +456,6 @@ export default function SmartKissanChat({ onBack }: SmartKissanChatProps) {
                                   </div>
                                 </div>
                               ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      
-                      {message.analysis && (
-                        <div className="mt-3 space-y-2">
-                          {message.analysis.disease && (
-                            <div className="bg-red-50 p-3 rounded-lg">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="font-semibold text-red-800">🐛 {message.analysis.disease}</span>
-                                <div className="text-xs text-red-600">
-                                  {message.analysis.confidence}% confidence
-                                </div>
-                              </div>
-                              {message.analysis.severity && (
-                                <div className="w-full bg-red-200 rounded-full h-2 mb-2">
-                                  <div
-                                    className="bg-red-600 h-2 rounded-full"
-                                    style={{ width: `${message.analysis.severity}%` }}
-                                  ></div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          
-                          {message.analysis.recommendations && (
-                            <div className="bg-green-50 p-3 rounded-lg">
-                              <h4 className="font-semibold text-green-800 mb-2">🌿 Recommendations:</h4>
-                              <ul className="text-sm text-green-700 space-y-1">
-                                {message.analysis.recommendations.map((rec, idx) => (
-                                  <li key={idx} className="flex items-start">
-                                    <span className="mr-2">•</span>
-                                    <span>{rec}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          
-                          {message.analysis.weather && (
-                            <div className="bg-blue-50 p-3 rounded-lg">
-                              <h4 className="font-semibold text-blue-800 mb-1">🌦 Weather Advice:</h4>
-                              <p className="text-sm text-blue-700">{message.analysis.weather}</p>
-                            </div>
-                          )}
-                          
-                          {message.analysis.irrigation && (
-                            <div className="bg-cyan-50 p-3 rounded-lg">
-                              <h4 className="font-semibold text-cyan-800 mb-1">💧 Irrigation:</h4>
-                              <p className="text-sm text-cyan-700">{message.analysis.irrigation}</p>
                             </div>
                           )}
                         </div>
